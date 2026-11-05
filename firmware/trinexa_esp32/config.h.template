@@ -1,0 +1,30 @@
+// =====================================================
+// TRINEXA ESP32 – Configuration Template
+// 
+// Copy this file to "config.h" in the same folder and fill in your values.
+// NEVER commit "config.h" with real credentials to Git.
+// =====================================================
+
+#pragma once
+
+// ----- Wi-Fi Credentials -----
+#define WIFI_SSID     "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+
+// ----- Backend Server -----
+// Set this to your laptop's local IPv4 address (e.g. 192.168.1.15).
+// In Windows Command Prompt run: ipconfig (check "IPv4 Address" under Wi-Fi)
+#define BACKEND_HOST  "192.168.1.100"
+#define BACKEND_PORT  3001
+
+// ----- Device Identity -----
+#define DEVICE_ID     "ESP32-01"
+
+// ----- Telemetry Reporting Interval -----
+#define TELEMETRY_INTERVAL_MS 5000  // Send reading every 5 seconds
+
+// ----- Capacitive Soil Moisture Calibration (12-bit ADC: 0 - 4095) -----
+// Dry air ADC value (~3200-3800), fully submerged in water (~1200-1600)
+#define SOIL_ADC_DRY  3200
+#define SOIL_ADC_WET  1400
+
