@@ -13,6 +13,12 @@ dist/
 dist-ssr/
 build/
 *.local
+.vite/
+coverage/
+*.tsbuildinfo
+.eslintcache
+patch-*.js
+patch-*.cjs
 
 # Environment Variables & Secrets (CRITICAL)
 .env

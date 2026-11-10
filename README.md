@@ -11,17 +11,20 @@ TRINEXA is an agricultural intelligence platform that bridges **physical ESP32 f
 │                   PHYSICAL ESP32 HARDWARE NODE                         │
 │  - Capacitive Soil Moisture Sensor (GPIO 34 ADC1_CH6)                  │
 │  - 4-in-1 TTL UART Soil pH Sensor (HardwareSerial2 RX 16 / TX 17)      │
+│    (Transmits: Soil pH, Raw Light Intensity `L:`, Temp `T:`, Water `W:`)│
 │  - DS18B20 Waterproof Soil Temperature Sensor (GPIO 5 OneWire)         │
 │  - DHT22 Air Temperature & Humidity Sensor (GPIO 4 Digital)            │
-│  - BH1750 Ambient Solar Irradiance Sensor (I2C SDA 21 / SCL 22)        │
+│  - Optional BH1750 I2C Ambient Light Sensor (I2C SDA 21 / SCL 22)      │
 └──────────────────────────────────┬─────────────────────────────────────┘
                                    │ HTTP POST (every 5s over Wi-Fi)
                                    ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                   TRINEXA-AI BACKEND ENGINE (:3001)                    │
 │  - Ingestion: POST /api/hardware/telemetry                             │
-│  - SQLite Database: `hardware_readings`, `simulation_readings`,        │
-│    `hardware_devices`, `hardware_ai_insights`, `telemetry_mode`        │
+│    Payload: `soil_moisture`, `soil_ph`, `ph_status`, `light_intensity`,│
+│             `light_source`, `light_unit`, `soil_temp`, `air_temp`...   │
+│  - SQLite Database: `hardware_readings`, `telemetry`, `farms`,         │
+│    `expenses`, `reports`, `market_prices`, `notifications`             │
 │  - Real-Time AI Diagnostics: Soil hydration, pH root cation exchange,  │
 │    fungal risk index, and sensor electrical health checks              │
 │  - Centralized Nutrient Modeling: Nitrate, Sodium & Potassium          │
@@ -35,6 +38,7 @@ TRINEXA is an agricultural intelligence platform that bridges **physical ESP32 f
 │  - Hidden Dot Switch: Subtle top-right mode toggle (persists reloads)  │
 │  - Soil Intelligence Dashboard: Soil Health index & Water Intelligence │
 │  - Digital Twin (Virtual Farm) & Crop Diagnostic Engine                │
+│  - Agricultural Modules: Expenses, Mandi Market, Reports, Notifications│
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -49,8 +53,8 @@ Target: **ESP32 Dev Module / ESP-WROOM-32** (CP2102 USB Bridge)
 | **Capacitive Soil Moisture** | **GPIO 34** | Analog (ADC1_CH6) | Powered by 3.3V. Input-only pin on ADC1 (operates concurrently with active Wi-Fi). |
 | **DHT22 (Air Temp & Humidity)** | **GPIO 4** | Digital Single-Wire | Powered by 3.3V. Requires a 4.7kΩ pull-up resistor between VCC and DATA. |
 | **DS18B20 (Soil Temperature)** | **GPIO 5** | OneWire Bus | Waterproof probe. Requires a 4.7kΩ pull-up resistor to 3.3V. *(Note: GPIO 5 is strapping pin MTDO. If boot hangs on your board, wire to **GPIO 18**)*. |
-| **4-in-1 Soil pH Sensor** | **RX: 16, TX: 17** | UART (HardwareSerial2)| 9600 baud, 8N1 serial protocol. **Level shifter / voltage divider required** if module logic is 5V. |
-| **BH1750 (Ambient Light)** | **SDA: 21, SCL: 22**| I2C (`Wire`) | Powered by 3.3V. Internal/external pull-ups to 3.3V on SDA/SCL. |
+| **4-in-1 Soil pH & Optical Sensor** | **RX: 16, TX: 17** | UART (HardwareSerial2)| 9600 baud, 8N1 serial protocol. Measures pH ($0-14$), plus optical intensity ($L:$), temperature ($T:$), and moisture state ($W:$). |
+| **BH1750 (Ambient Light - Optional)** | **SDA: 21, SCL: 22**| I2C (`Wire`) | Powered by 3.3V. Internal/external pull-ups to 3.3V on SDA/SCL. *(Note: Telemetry defaults to 4-in-1 `PH_MODULE_L_RAW` when present)*. |
 
 > [!IMPORTANT]
 > **Electrical Safety Precautions for 4-in-1 pH Module**:
@@ -264,29 +268,30 @@ The secondary section on the `Sensors` page focuses on:
 
 ---
 
-## 11. Interactive Demonstration Keyboard Shortcuts
+## 11. Application Routes & Navigation Map
 
-To keep the user interface clean, presentation shortcuts are operated silently in the background when the system is in **Simulated Mode**:
-
-| Shortcut Key | Parameter | Adjustment Step | Bounds |
-| :--- | :--- | :--- | :--- |
-| **`m`** / **`M`** | Soil Moisture | `+1.0%` | Clamped to `[0%, 100%]` |
-| **`Shift + M`** | Soil Moisture | `-1.0%` | Clamped to `[0%, 100%]` |
-| **`t`** / **`T`** | Soil Temperature | `+0.5°C` | Clamped to `[-10°C, 60°C]` |
-| **`Shift + T`** | Soil Temperature | `-0.5°C` | Clamped to `[-10°C, 60°C]` |
-| **`p`** / **`P`** | Soil pH | `+0.1 pH` | Clamped to `[0.0, 14.0]` |
-| **`Shift + P`** | Soil pH | `-0.1 pH` | Clamped to `[0.0, 14.0]` |
-
-*(Note: Keyboard shortcuts are inactive when typing inside input forms or text areas).*
+| Route | Module | Description & Capabilities |
+| :--- | :--- | :--- |
+| **`/dashboard`** | **Command Dashboard** | High-level farm KPIs, active alerts, microclimate, quick action dispatch. |
+| **`/sensors`** | **Sensors & Matrix** | Live hardware node telemetry, macronutrients (Nitrate, Sodium, Potassium, SAR), hidden Live/Simulated mode switch. |
+| **`/virtual-farm`** | **Virtual Farm Twin** | 2.5D spatial isometric field simulator, crop suitability, what-if modifiers. |
+| **`/expenses`** | **Farm Finances** | Database ledger of farm expenses, category charts, budget limits, overrun warnings. |
+| **`/market`** | **Mandi Prices** | Real-time APMC commodity market rates, multi-mandi comparisons, 30-day trends, watchlists. |
+| **`/reports`** | **Agricultural Reports** | Compile official audits (Soil Health, Weekly, Monthly, Expenses), CSV download, printable PDF. |
+| **`/notifications`** | **Alert Center** | Real-time agronomic and device notifications with search, filters (Unread, Warning, Critical), and mark-all-read. |
+| **`/analytics`** | **Historical Analytics**| Multi-day telemetry trends, moisture retention curves, sensor uptime. |
+| **`/irrigation`** | **Irrigation Engine** | Solenoid valve automation, moisture threshold triggers, water conservation ledger. |
+| **`/weather`** | **Microclimate** | GPS-synchronized forecast, evapotranspiration rates, solar irradiance. |
+| **`/crop-ai`** | **Crop Diagnostics** | Computer vision plant leaf disease diagnosis and agronomic prescriptions. |
+| **`/devices`** | **Device Health** | Physical ESP32 connection heartbeat, RSSI signal, firmware uptime diagnostics. |
+| **`/farm-health`** | **Soil Health Index** | Root cation balance, fungal pathogen risk index, soil conditioning guide. |
 
 ---
 
----
-
-## 11. Prerequisites & Required Libraries
+## 12. Prerequisites & Required Libraries
 
 ### Node.js & System
-- Node.js v18.0.0+
+- Node.js v18.0.0+ (Tested on v22.x)
 - npm v9.0.0+
 
 ### Arduino IDE Libraries
@@ -295,11 +300,11 @@ Install via **Tools > Manage Libraries**:
 2. `Adafruit Unified Sensor` by Adafruit (v1.1.14+)
 3. `DallasTemperature` by Miles Burton (v3.9.0+)
 4. `OneWire` by Paul Stoffregen (v2.3.8+)
-5. `BH1750` by Christopher Laws (v1.3.0+)
+5. `BH1750` by Christopher Laws (v1.3.0+) *(optional auxiliary)*
 
 ---
 
-## 12. Complete Startup Instructions
+## 13. Complete Startup Instructions
 
 ### Step 1: Install Dependencies
 ```powershell
@@ -336,31 +341,43 @@ npm run dev
 ```
 
 ### Step 4: Access Dashboard
-- **Local Access**: [http://localhost:5173/sensors](http://localhost:5173/sensors)
+- **Sensors Hub**: [http://localhost:5173/sensors](http://localhost:5173/sensors)
+- **Executive Dashboard**: [http://localhost:5173/dashboard](http://localhost:5173/dashboard)
+- **Virtual Farm Digital Twin**: [http://localhost:5173/virtual-farm](http://localhost:5173/virtual-farm)
+- **Expenses Ledger**: [http://localhost:5173/expenses](http://localhost:5173/expenses)
+- **Agricultural Reports**: [http://localhost:5173/reports](http://localhost:5173/reports)
+- **Mandi Market Prices**: [http://localhost:5173/market](http://localhost:5173/market)
 - **Local Network (LAN)**: `http://<YOUR_IP>:5173/sensors`
-- **Dashboard**: [http://localhost:5173/dashboard](http://localhost:5173/dashboard)
 
 ---
 
-## 13. Running Automated Tests
+## 14. Running Automated Tests
 
 Run the full Vitest suite:
 ```powershell
 npm test
 ```
-All 12 automated unit tests verify:
-1. Valid telemetry processing without errors
-2. Disconnected sensor / null-handling safety
-3. Drought stress detection and irrigation alert generation
-4. Acidic pH detection and agricultural lime recommendation
-5. Fungal pathogen microclimate risk detection
-6. Hardware ADC short-circuit and open-pin anomaly detection
-7. Centralized nutrient modeling in Live Hybrid mode
-8. Nitrate, Sodium, and Potassium evaluation without metric confusion
-9. Capacitive soil moisture narrow-delta calibration and division-by-zero protection
-10. 4-in-1 pH UART packet parsing algorithm (labelled and CSV formats, out-of-range rejection)
-11. Keyboard simulation controls (`M`, `Shift+M`, `T`, `Shift+T`, `P`, `Shift+P`) and bounds
-12. Application health and routing tests
+All **29 automated tests across 3 test suites** verify:
+1. Valid ESP32 telemetry packet processing and database persistence
+2. Hardware disconnection errors and genuine null-handling safety
+3. Firmware `ph_status` handling (`VALID`, `AIR`, and `UNAVAILABLE`)
+4. 4-in-1 raw light intensity (`PH_MODULE_L_RAW`) ingestion
+5. Drought stress detection and automated irrigation alert generation
+6. Acidic and alkaline pH classification and agricultural amendment recommendations
+7. Fungal pathogen microclimate risk detection
+8. Hardware ADC short-circuit and open-pin anomaly detection
+9. Centralized nutrient modeling in Live Hybrid mode
+10. Nitrate, Sodium, and Potassium evaluation without metric confusion
+11. Clamped Phosphorus ($[30, 85]\text{ mg/kg}$) without negative drift
+12. Capacitive soil moisture narrow-delta calibration and division-by-zero protection
+13. 4-in-1 pH UART packet parsing algorithm (labelled and CSV formats, out-of-range rejection)
+14. Keyboard simulation controls (`M`, `Shift+M`, `T`, `Shift+T`, `P`, `Shift+P`) and bounds
+15. Virtual farm multi-farm profiles and zone geometries
+16. Agricultural report creation, CSV dataset export, and printable HTML/PDF generation
+17. Financial expense recording, positive amount validation, and budget overrun alert triggering
+18. APMC mandi commodity pricing, multi-mandi comparisons, and watchlist CRUD
+19. Notification deduplication, cooldown suppression, and mark-as-read database persistence
+20. Application health, error boundary recovery, and routing integrity
 
 ---
 
