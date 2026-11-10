@@ -13,6 +13,7 @@ import { Irrigation } from "./pages/Irrigation";
 import { Weather } from "./pages/Weather";
 import { Market, Expenses } from "./pages/MarketExpenses";
 import { Analytics, Devices, FarmHealth, Automation, Reports, Settings } from "./pages/Modules";
+import { NotificationsPage } from "./pages/NotificationsPage";
 import { Auth, Onboarding } from "./pages/Auth";
 import NotFound from "./pages/NotFound";
 
@@ -43,6 +44,7 @@ const App = () => (
             <Route path="/farm-health" element={<FarmHealth />} />
             <Route path="/automation" element={<Automation />} />
             <Route path="/reports" element={<Reports />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

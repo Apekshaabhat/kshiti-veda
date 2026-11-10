@@ -1,14 +1,18 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
+export type TelemetryMode = 'LIVE' | 'SIMULATED';
+
 export interface ZoneState {
   id: string;
   name: string;
-  moisture: number;
-  ph: number;
-  nitrogen: number;
-  phosphorus: number;
-  potassium: number;
-  temperature: number;
+  moisture: number | null;
+  ph: number | null;
+  nitrate: number | null;
+  sodium: number | null;
+  potassium: number | null;
+  nitrogen?: number | null;
+  phosphorus?: number | null;
+  temperature: number | null;
   healthScore: number;
   condition: string;
 }
@@ -32,27 +36,63 @@ export interface HardwareTelemetry {
   soil_moisture: number | null;
   soil_raw_adc?: number | null;
   soil_ph: number | null;
+  ph_status?: 'VALID' | 'AIR' | 'UNAVAILABLE';
   soil_temperature: number | null;
   air_temperature: number | null;
   air_humidity: number | null;
   light_intensity: number | null;
+  light_source?: string;
+  light_unit?: string;
   wifi_rssi: number | null;
   uptime_ms?: number | null;
   timestamp: number;
 }
 
 export interface HardwareStatus {
+  mode: TelemetryMode;
+  npk_available: boolean;
+  npk_provenance: 'simulation';
   online: boolean;
   device_id: string | null;
   last_seen: number | null;
-  data: HardwareTelemetry | null;
+  data: (HardwareTelemetry & {
+    temp?: number | null;
+    humidity?: number | null;
+    soil?: number | null;
+    ph?: number | null;
+    ph_status?: 'VALID' | 'AIR' | 'UNAVAILABLE';
+    light?: number | null;
+    light_source?: string;
+    light_unit?: string;
+    nitrogen?: number;
+    phosphorus?: number;
+    potassium?: number;
+    npk_provenance?: 'simulation';
+  }) | null;
+}
+
+export interface SimulationState {
+  moisture: number;
+  ph: number;
+  soil_temperature: number;
+  air_temperature: number;
+  air_humidity: number;
+  light_intensity: number;
+  nitrate: number;
+  sodium: number;
+  potassium: number;
+  nitrogen?: number;
+  phosphorus?: number;
+  last_updated: number;
 }
 
 interface TelemetryData {
+  mode?: TelemetryMode;
   zones: ZoneState[];
   events: RiskEvent[];
   activities: ActivityEvent[];
   hardware?: HardwareStatus;
+  simulation?: SimulationState;
   timestamp: number;
 }
 
@@ -60,126 +100,180 @@ interface TelemetryContextType {
   data: TelemetryData;
   connected: boolean;
   hardware: HardwareStatus;
+  mode: TelemetryMode;
+  simulation: SimulationState;
+  setMode: (mode: TelemetryMode) => Promise<void>;
+  controlSimulation: (control: {
+    deltaMoisture?: number;
+    deltaTemp?: number;
+    deltaPh?: number;
+    moisture?: number;
+    soil_temperature?: number;
+    ph?: number;
+  }) => Promise<void>;
   resetDemo: () => Promise<void>;
   refreshHardware: () => Promise<void>;
 }
 
 const INITIAL_ZONES: ZoneState[] = [
-  { id: 'zone-a', name: 'Zone A (Physical ESP32)', moisture: 54.2, ph: 6.8, nitrogen: 72.0, phosphorus: 42.5, potassium: 65.0, temperature: 26.4, healthScore: 78, condition: 'Moisture Warning' },
-  { id: 'zone-b', name: 'Zone B - South Orchard', moisture: 68.5, ph: 6.5, nitrogen: 88.0, phosphorus: 54.0, potassium: 70.0, temperature: 25.8, healthScore: 92, condition: 'Optimal' },
-  { id: 'zone-c', name: 'Zone C - East Greenhouse', moisture: 74.1, ph: 6.7, nitrogen: 91.5, phosphorus: 58.2, potassium: 75.0, temperature: 24.2, healthScore: 95, condition: 'Optimal' }
+  { id: 'zone-a', name: 'Zone A (Physical ESP32 Node)', moisture: null, ph: null, nitrate: 52.4, sodium: 26.8, potassium: 74.2, nitrogen: 52.4, phosphorus: 26.8, temperature: null, healthScore: 0, condition: 'Waiting for Telemetry' },
+  { id: 'zone-b', name: 'Zone B - South Orchard', moisture: 68.5, ph: 6.5, nitrate: 56.0, sodium: 24.5, potassium: 70.0, nitrogen: 56.0, phosphorus: 24.5, temperature: 25.8, healthScore: 92, condition: 'Optimal' },
+  { id: 'zone-c', name: 'Zone C - East Greenhouse', moisture: 74.1, ph: 6.7, nitrate: 58.2, sodium: 22.0, potassium: 75.0, nitrogen: 58.2, phosphorus: 22.0, temperature: 24.2, healthScore: 95, condition: 'Optimal' }
 ];
 
 const INITIAL_ACTIVITIES: ActivityEvent[] = [
-  { type: 'irrigation', text: 'Auto-irrigation started in Zone A (15 min scheduled)', timestamp: Date.now() - 120000 },
-  { type: 'telemetry', text: 'Telemetry pulse sync: All Zone Nodes and ESP32 interface ready', timestamp: Date.now() - 300000 },
-  { type: 'analysis', text: 'AI Digital Twin recalculated crop stress index: 88/100', timestamp: Date.now() - 600000 }
+  { type: 'telemetry', text: 'Telemetry architecture initialized in LIVE HYBRID mode. Physical sensors & simulated nutrients ready.', timestamp: Date.now() - 60000 },
+  { type: 'system', text: 'ESP32 ingestion active. Nitrate, Sodium & Potassium sourced from centralized demonstration baseline.', timestamp: Date.now() - 30000 }
 ];
 
 const DEFAULT_HARDWARE: HardwareStatus = {
+  mode: 'LIVE',
+  npk_available: true,
+  npk_provenance: 'simulation',
   online: false,
   device_id: null,
   last_seen: null,
   data: null
 };
 
+const DEFAULT_SIMULATION: SimulationState = {
+  moisture: 58.5,
+  ph: 6.8,
+  soil_temperature: 24.5,
+  air_temperature: 27.2,
+  air_humidity: 65.0,
+  light_intensity: 450.0,
+  nitrate: 52.4,
+  sodium: 26.8,
+  potassium: 74.2,
+  nitrogen: 52.4,
+  phosphorus: 26.8,
+  last_updated: Date.now()
+};
+
 const DEFAULT_DATA: TelemetryData = {
+  mode: 'LIVE',
   zones: INITIAL_ZONES,
   events: [],
   activities: INITIAL_ACTIVITIES,
   hardware: DEFAULT_HARDWARE,
+  simulation: DEFAULT_SIMULATION,
   timestamp: Date.now()
 };
 
 const TelemetryContext = createContext<TelemetryContextType | undefined>(undefined);
 
+const getBackendHost = () => {
+  if (typeof window !== 'undefined' && window.location.hostname) {
+    return window.location.hostname;
+  }
+  return 'localhost';
+};
+const getApiBase = () => `http://${getBackendHost()}:3001`;
+const getWsUrl = () => `${(typeof window !== 'undefined' && window.location.protocol === 'https:') ? 'wss:' : 'ws:'}//${getBackendHost()}:3001/ws`;
+
 export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [data, setData] = useState<TelemetryData>(DEFAULT_DATA);
   const [hardware, setHardware] = useState<HardwareStatus>(DEFAULT_HARDWARE);
+  const [mode, setModeState] = useState<TelemetryMode>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('trinexa_telemetry_mode');
+      if (saved === 'LIVE' || saved === 'SIMULATED') return saved;
+    }
+    return 'LIVE';
+  });
+  const [simulation, setSimulation] = useState<SimulationState>(DEFAULT_SIMULATION);
   const [connected, setConnected] = useState(false);
 
   const fetchHardwareStatus = async () => {
     try {
-      const res = await fetch('http://localhost:3001/api/hardware/status');
+      const res = await fetch(`${getApiBase()}/api/hardware/status`);
       if (res.ok) {
         const hw: HardwareStatus = await res.json();
         setHardware(hw);
+        if (hw.mode && !localStorage.getItem('trinexa_telemetry_mode')) {
+          setModeState(hw.mode);
+        }
       }
     } catch {
       // Backend not running yet or unreachable
     }
   };
 
+  const fetchMode = async () => {
+    try {
+      const res = await fetch(`${getApiBase()}/api/telemetry/mode`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.mode && !localStorage.getItem('trinexa_telemetry_mode')) {
+          setModeState(json.mode);
+        }
+      }
+    } catch {
+      // Backend unreachable
+    }
+  };
+
+  const setMode = async (newMode: TelemetryMode) => {
+    setModeState(newMode);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('trinexa_telemetry_mode', newMode);
+    }
+    try {
+      const res = await fetch(`${getApiBase()}/api/telemetry/mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: newMode })
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setModeState(json.mode);
+        fetchHardwareStatus();
+      }
+    } catch (e) {
+      console.warn("Failed to update telemetry mode on backend:", e);
+    }
+  };
+
+  const controlSimulation = async (control: {
+    deltaMoisture?: number;
+    deltaTemp?: number;
+    deltaPh?: number;
+    moisture?: number;
+    soil_temperature?: number;
+    ph?: number;
+  }) => {
+    try {
+      const res = await fetch(`${getApiBase()}/api/simulation/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(control)
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.simulation) setSimulation(json.simulation);
+      }
+    } catch (e) {
+      console.warn("Failed to dispatch simulation control:", e);
+    }
+  };
+
   useEffect(() => {
     let ws: WebSocket | null = null;
     let reconnectTimer: NodeJS.Timeout;
-    let simulationTimer: NodeJS.Timeout;
     let hardwarePollTimer: NodeJS.Timeout;
-    let isWsAvailable = false;
 
-    // Simulation for uninstrumented demo zones when WS is not streaming
-    const runSimulation = () => {
-      setData((prev) => {
-        const zones = prev.zones.map((z) => {
-          // If Zone A is physically reporting, leave moisture, pH, temp to hardware
-          if (z.id === 'zone-a' && hardware.online && hardware.data) {
-            return {
-              ...z,
-              moisture: hardware.data.soil_moisture ?? z.moisture,
-              ph: hardware.data.soil_ph ?? z.ph,
-              temperature: hardware.data.soil_temperature ?? z.temperature
-            };
-          }
-
-          const mDelta = (Math.random() - 0.48) * 0.4;
-          const moisture = Math.max(30, Math.min(95, z.moisture + mDelta));
-          const ph = Math.max(5.5, Math.min(8.0, z.ph + (Math.random() - 0.5) * 0.02));
-          const nitrogen = Math.max(40, Math.min(150, z.nitrogen + (Math.random() - 0.5) * 0.3));
-          const phosphorus = Math.max(30, Math.min(100, z.phosphorus + (Math.random() - 0.5) * 0.2));
-          const potassium = Math.max(40, Math.min(120, z.potassium + (Math.random() - 0.5) * 0.2));
-          const temperature = Math.max(18, Math.min(38, z.temperature + (Math.random() - 0.5) * 0.1));
-
-          let healthScore = 95;
-          let condition = 'Optimal';
-
-          if (moisture < 60) {
-            healthScore -= 15;
-            condition = 'Moisture Warning';
-          }
-          if (phosphorus < 50) {
-            healthScore -= 10;
-            condition = condition === 'Optimal' ? 'Low Phosphorus' : condition + ' + Low P';
-          }
-
-          return {
-            ...z,
-            moisture: Number(moisture.toFixed(1)),
-            ph: Number(ph.toFixed(2)),
-            nitrogen: Number(nitrogen.toFixed(1)),
-            phosphorus: Number(phosphorus.toFixed(1)),
-            potassium: Number(potassium.toFixed(1)),
-            temperature: Number(temperature.toFixed(1)),
-            healthScore: Math.max(40, healthScore),
-            condition
-          };
-        });
-
-        return {
-          ...prev,
-          zones,
-          timestamp: Date.now()
-        };
-      });
-    };
+    fetchHardwareStatus();
+    fetchMode();
 
     const connect = () => {
       try {
-        ws = new WebSocket('ws://localhost:3001/ws');
+        ws = new WebSocket(getWsUrl());
 
         ws.onopen = () => {
           setConnected(true);
-          isWsAvailable = true;
           fetchHardwareStatus();
+          fetchMode();
         };
 
         ws.onmessage = (event) => {
@@ -187,18 +281,17 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const msg = JSON.parse(event.data);
             if (msg.type === 'TELEMETRY_UPDATE' && msg.payload?.zones) {
               setData(msg.payload);
-              if (msg.payload.hardware) {
-                setHardware(msg.payload.hardware);
-              }
+              if (msg.payload.mode) setModeState(msg.payload.mode);
+              if (msg.payload.hardware) setHardware(msg.payload.hardware);
+              if (msg.payload.simulation) setSimulation(msg.payload.simulation);
             }
           } catch (e) {
-            console.error("Failed to parse telemetry", e);
+            console.error("Failed to parse telemetry message", e);
           }
         };
 
         ws.onclose = () => {
           setConnected(false);
-          isWsAvailable = false;
           reconnectTimer = setTimeout(connect, 3000);
         };
 
@@ -212,21 +305,13 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     connect();
 
-    // Fallback simulation timer for standalone front-end preview
-    simulationTimer = setInterval(() => {
-      if (!isWsAvailable) {
-        runSimulation();
-      }
-    }, 3000);
-
-    // Periodic hardware status polling (every 4 seconds)
+    // Periodic hardware status & mode sync (every 3 seconds)
     hardwarePollTimer = setInterval(() => {
       fetchHardwareStatus();
-    }, 4000);
+    }, 3000);
 
     return () => {
       clearTimeout(reconnectTimer);
-      clearInterval(simulationTimer);
       clearInterval(hardwarePollTimer);
       if (ws) ws.close();
     };
@@ -234,7 +319,7 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const resetDemo = async () => {
     try {
-      await fetch('http://localhost:3001/api/demo/reset', { method: 'POST' });
+      await fetch(`${getApiBase()}/api/demo/reset`, { method: 'POST' });
     } catch {
       console.log("Demo reset (client fallback)");
       setData(DEFAULT_DATA);
@@ -244,7 +329,17 @@ export const TelemetryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const safeData = (data && data.zones && data.zones.length > 0) ? data : DEFAULT_DATA;
 
   return (
-    <TelemetryContext.Provider value={{ data: safeData, connected, hardware, resetDemo, refreshHardware: fetchHardwareStatus }}>
+    <TelemetryContext.Provider value={{
+      data: safeData,
+      connected,
+      hardware,
+      mode,
+      simulation,
+      setMode,
+      controlSimulation,
+      resetDemo,
+      refreshHardware: fetchHardwareStatus
+    }}>
       {children}
     </TelemetryContext.Provider>
   );

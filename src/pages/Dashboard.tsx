@@ -1,19 +1,19 @@
 import { motion } from "framer-motion";
 import * as Icons from "lucide-react";
 import { AppShell } from "@/components/trinexa/AppShell";
-import { useTelemetry, ZoneState } from "@/lib/TelemetryProvider";
+import { useTelemetry } from "@/lib/TelemetryProvider";
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 const Dashboard = () => {
-  const { data, connected, hardware } = useTelemetry();
-
-  // Render immediately with telemetry data
+  const { data, connected, hardware, mode } = useTelemetry();
 
   // Calculate Farm Avg Health
-  const avgHealth = Math.round(data.zones.reduce((acc, z) => acc + z.healthScore, 0) / data.zones.length);
+  const scoredZones = data.zones.filter(z => z.healthScore > 0);
+  const avgHealth = scoredZones.length 
+    ? Math.round(scoredZones.reduce((acc, z) => acc + z.healthScore, 0) / scoredZones.length)
+    : 0;
 
-  // Generate predictive data based on current overall moisture trend (Mocked for visual, but anchored to real base)
-  const baseYield = 42;
+  // Generate predictive data based on current overall health trend
   const yieldData = Array.from({ length: 7 }, (_, i) => ({
     day: `Day ${i+1}`,
     health: Math.max(0, avgHealth - (i * 0.5)),
@@ -21,9 +21,11 @@ const Dashboard = () => {
   }));
 
   // Helper to determine color based on parameter
-  const getParamColor = (param: string, value: number) => {
-    if (param === 'moisture') return value < 60 ? 'text-red-400' : 'text-primary';
-    if (param === 'phosphorus') return value < 50 ? 'text-red-400' : 'text-primary';
+  const getParamColor = (param: string, value: number | null | undefined) => {
+    if (value === null || value === undefined) return 'text-zinc-400 font-normal';
+    if (param === 'moisture') return value < 50 ? 'text-red-400' : 'text-primary';
+    if (param === 'sodium') return value > 50 ? 'text-red-400' : 'text-primary';
+    if (param === 'nitrate') return value < 35 ? 'text-red-400' : 'text-primary';
     return 'text-primary';
   };
 
@@ -37,11 +39,11 @@ const Dashboard = () => {
             <div className="flex flex-wrap items-center gap-3 mb-3">
                <span className={`px-3 py-1 flex items-center gap-2 rounded-lg text-[10px] font-black uppercase tracking-widest border ${connected ? 'bg-primary/10 border-primary/30 text-primary shadow-glow' : 'bg-red-500/10 border-red-500/30 text-red-500'}`}>
                  <span className={`w-2 h-2 rounded-full ${connected ? 'bg-primary animate-pulse' : 'bg-red-500'}`}/>
-                 {connected ? 'LIVE TELEMETRY' : 'OFFLINE'}
+                 {connected ? (mode === 'LIVE' ? (hardware?.online ? 'LIVE HARDWARE STREAM' : 'AWAITING ESP32 NODE') : 'CALIBRATED SIMULATION') : 'OFFLINE'}
                </span>
-               <span className={`px-3 py-1 flex items-center gap-2 rounded-lg text-[10px] font-black uppercase tracking-widest border ${hardware?.online ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
-                 <span className={`w-2 h-2 rounded-full ${hardware?.online ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}/>
-                 {hardware?.online ? `ESP32 (${hardware.device_id || 'NODE'}) LINKED` : 'ESP32 AWAITING BEACON'}
+               <span className={`px-3 py-1 flex items-center gap-2 rounded-lg text-[10px] font-black uppercase tracking-widest border ${mode === 'LIVE' && hardware?.online ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
+                 <span className={`w-2 h-2 rounded-full ${mode === 'LIVE' && hardware?.online ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}/>
+                 {mode === 'LIVE' ? (hardware?.online ? `ESP32 (${hardware.device_id || 'NODE'}) LINKED` : 'ESP32 AWAITING BEACON') : 'HYBRID NUTRIENT MATRIX'}
                </span>
                <span className="text-xs font-bold text-muted-foreground">Updated precisely {(Date.now() - data.timestamp) < 5000 ? 'just now' : 'a moment ago'}</span>
             </div>
@@ -75,7 +77,7 @@ const Dashboard = () => {
                <div className="text-xs font-black uppercase tracking-widest text-muted-foreground mb-2">Analysis Breakdown</div>
                <p className="text-sm font-bold text-foreground">
                   Score is {avgHealth >= 90 ? 'excellent' : avgHealth >= 80 ? 'good' : 'declining'}. <br/>
-                  <span className="text-primary mt-1 block">Driven by real-time Zone telemetry (Moisture + NPK weightings).</span>
+                  <span className="text-primary mt-1 block">Driven by real-time Zone telemetry (Moisture + Nutrient weightings).</span>
                </p>
             </div>
           </div>
@@ -96,27 +98,43 @@ const Dashboard = () => {
                      <div>
                        <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1">
                           <span>Moisture</span>
-                          <span className={getParamColor('moisture', z.moisture)}>{z.moisture.toFixed(1)}%</span>
+                          <span className={getParamColor('moisture', z.moisture)}>
+                            {z.moisture !== null ? `${z.moisture.toFixed(1)}%` : 'UNAVAILABLE'}
+                          </span>
                        </div>
-                       <div className="h-1.5 rounded-full bg-black/50 overflow-hidden"><div className="h-full bg-primary" style={{width: `${z.moisture}%`}}/></div>
+                       <div className="h-1.5 rounded-full bg-black/50 overflow-hidden">
+                         <div className="h-full bg-primary" style={{width: `${z.moisture ?? 0}%`}}/>
+                       </div>
                      </div>
                      <div>
                        <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1">
-                          <span>Phosphorus</span>
-                          <span className={getParamColor('phosphorus', z.phosphorus)}>{z.phosphorus.toFixed(1)} mg/kg</span>
+                          <span>Nitrate (NO₃⁻)</span>
+                          <span className={getParamColor('nitrate', z.nitrate ?? z.nitrogen)}>
+                            {(z.nitrate ?? z.nitrogen) !== null && (z.nitrate ?? z.nitrogen) !== undefined ? `${(z.nitrate ?? z.nitrogen)!.toFixed(1)} mg/kg` : '—'}
+                          </span>
                        </div>
-                       <div className="h-1.5 rounded-full bg-black/50 overflow-hidden"><div className="h-full bg-[hsl(45,100%,60%)]" style={{width: `${z.phosphorus}%`}}/></div>
+                       <div className="h-1.5 rounded-full bg-black/50 overflow-hidden">
+                         <div className="h-full bg-[hsl(180,100%,55%)]" style={{width: `${Math.min(100, z.nitrate ?? z.nitrogen ?? 0)}%`}}/>
+                       </div>
                      </div>
                      <div>
                        <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1">
-                          <span>Nitrogen</span>
-                          <span className="text-foreground">{z.nitrogen.toFixed(1)} mg/kg</span>
+                          <span>Sodium (Na⁺)</span>
+                          <span className={getParamColor('sodium', z.sodium ?? z.phosphorus)}>
+                            {(z.sodium ?? z.phosphorus) !== null && (z.sodium ?? z.phosphorus) !== undefined ? `${Math.max(0, (z.sodium ?? z.phosphorus)!).toFixed(1)} mg/kg` : '—'}
+                          </span>
                        </div>
-                       <div className="h-1.5 rounded-full bg-black/50 overflow-hidden"><div className="h-full bg-[hsl(180,100%,55%)]" style={{width: `${z.nitrogen}%`}}/></div>
+                       <div className="h-1.5 rounded-full bg-black/50 overflow-hidden">
+                         <div className="h-full bg-[hsl(45,100%,60%)]" style={{width: `${Math.min(100, (z.sodium ?? z.phosphorus ?? 0) * 2)}%`}}/>
+                       </div>
                      </div>
                      <div className="flex items-center gap-4 pt-2">
-                       <span className="text-[10px] font-black uppercase tracking-widest bg-black/40 px-2 py-1 rounded border border-white/5 text-muted-foreground">pH {z.ph.toFixed(2)}</span>
-                       <span className="text-[10px] font-black uppercase tracking-widest bg-black/40 px-2 py-1 rounded border border-white/5 text-muted-foreground">{z.temperature.toFixed(1)}°C</span>
+                       <span className="text-[10px] font-black uppercase tracking-widest bg-black/40 px-2 py-1 rounded border border-white/5 text-muted-foreground">
+                         pH {z.ph !== null ? z.ph.toFixed(2) : '—'}
+                       </span>
+                       <span className="text-[10px] font-black uppercase tracking-widest bg-black/40 px-2 py-1 rounded border border-white/5 text-muted-foreground">
+                         {z.temperature !== null ? `${z.temperature.toFixed(1)}°C` : '—'}
+                       </span>
                      </div>
                   </div>
                   
@@ -164,7 +182,8 @@ const Dashboard = () => {
               </div>
               <div className="space-y-4">
                  {data.zones.map(z => {
-                   const requirement = z.moisture < 60 ? "HIGH" : z.moisture < 70 ? "MODERATE" : "LOW";
+                   const moistureVal = z.moisture ?? 58.5;
+                   const requirement = moistureVal < 60 ? "HIGH" : moistureVal < 70 ? "MODERATE" : "LOW";
                    const reqColor = requirement === "HIGH" ? "text-red-400" : requirement === "MODERATE" ? "text-[hsl(45,100%,60%)]" : "text-[hsl(180,100%,55%)]";
                    
                    return (
@@ -174,9 +193,9 @@ const Dashboard = () => {
                           <span className={`text-[10px] font-black uppercase tracking-widest ${reqColor}`}>Req: {requirement}</span>
                        </div>
                        <p className="text-xs font-bold text-muted-foreground leading-relaxed">
-                          {requirement === 'HIGH' ? `Irrigation required. Moisture dropped to ${z.moisture.toFixed(1)}%.` :
-                           requirement === 'MODERATE' ? `Moisture stable at ${z.moisture.toFixed(1)}%. Monitor closely.` :
-                           `Optimal moisture at ${z.moisture.toFixed(1)}%. No action needed.`}
+                          {requirement === 'HIGH' ? `Irrigation required. Moisture dropped to ${moistureVal.toFixed(1)}%.` :
+                           requirement === 'MODERATE' ? `Moisture stable at ${moistureVal.toFixed(1)}%. Monitor closely.` :
+                           `Optimal moisture at ${moistureVal.toFixed(1)}%. No action needed.`}
                        </p>
                      </div>
                    );

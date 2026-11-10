@@ -1,8 +1,8 @@
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, Activity, Brain, Droplets, CloudSun, TrendingUp, Receipt, BarChart3, Cpu, Heart, Zap, FileText, Settings, Bell, Mic, ChevronDown, Wifi, Battery, Sun, Globe, RefreshCcw } from "lucide-react";
+import { LayoutDashboard, Activity, Brain, Droplets, CloudSun, TrendingUp, Receipt, BarChart3, Cpu, Heart, Zap, FileText, Settings, Bell, Mic, ChevronDown, Wifi, Battery, Sun, Globe, RefreshCcw, Check, AlertTriangle, AlertCircle, Info, ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useTelemetry } from "@/lib/TelemetryProvider";
 import { useFarm } from "@/lib/FarmProvider";
 
@@ -32,6 +32,70 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
   const [lang, setLang] = useState(i18n.language || 'en');
   const { connected, resetDemo } = useTelemetry();
   const { farms, activeFarm, setActiveFarmId } = useFarm();
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  const loadNotifications = async () => {
+    try {
+      const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+      const [listRes, countRes] = await Promise.all([
+        fetch(`http://${host}:3001/api/notifications?limit=15`),
+        fetch(`http://${host}:3001/api/notifications/count`)
+      ]);
+      if (listRes.ok) {
+        const json = await listRes.json();
+        setNotifications(json.notifications || json.data || (Array.isArray(json) ? json : []));
+      }
+      if (countRes.ok) {
+        const json = await countRes.json();
+        setUnreadCount(json.unread_count || 0);
+      }
+    } catch {
+      // Backend not running yet
+    }
+  };
+
+  useEffect(() => {
+    loadNotifications();
+    const interval = setInterval(loadNotifications, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setNotificationsOpen(false);
+      }
+    };
+    if (notificationsOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [notificationsOpen]);
+
+  const markAsRead = async (id: string) => {
+    try {
+      const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+      await fetch(`http://${host}:3001/api/notifications/${id}/read`, { method: 'POST' });
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: 1 } : n));
+      setUnreadCount(prev => Math.max(0, prev - 1));
+    } catch (e) {
+      console.warn("Failed to mark notification read", e);
+    }
+  };
+
+  const markAllAsRead = async () => {
+    try {
+      const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+      await fetch(`http://${host}:3001/api/notifications/mark-all-read`, { method: 'POST' });
+      setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
+      setUnreadCount(0);
+    } catch (e) {
+      console.warn("Failed to mark all read", e);
+    }
+  };
 
   const toggleLang = () => {
     const newLang = lang === 'en' ? 'hi' : lang === 'hi' ? 'mr' : 'en';
@@ -121,10 +185,106 @@ export const AppShell = ({ children }: { children: React.ReactNode }) => {
               <Globe className="w-4 h-4 text-primary" />
               {lang === 'en' ? 'EN' : 'HI'}
             </button>
-            <button className="w-10 h-10 rounded-xl bg-black/40 border border-white/5 flex items-center justify-center text-foreground hover:bg-black/60 relative transition-all shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)]">
-              <Bell className="w-4.5 h-4.5" />
-              <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full bg-primary shadow-glow" />
-            </button>
+            {/* Interactive Notifications Popover */}
+            <div className="relative" ref={notifRef}>
+              <button
+                type="button"
+                aria-label="View notifications"
+                onClick={() => setNotificationsOpen(!notificationsOpen)}
+                className="w-10 h-10 rounded-xl bg-black/40 border border-white/5 flex items-center justify-center text-foreground hover:bg-black/60 relative transition-all shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] focus:outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer"
+              >
+                <Bell className="w-4.5 h-4.5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-500 text-[10px] font-black text-black flex items-center justify-center shadow-[0_0_8px_#34d399] animate-pulse">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              <AnimatePresence>
+                {notificationsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute right-0 top-12 w-80 sm:w-96 bg-zinc-950/95 border border-white/10 rounded-2xl shadow-2xl backdrop-blur-xl z-50 overflow-hidden flex flex-col max-h-[480px]"
+                  >
+                    <div className="p-4 border-b border-white/10 flex items-center justify-between bg-black/40">
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-sm uppercase tracking-wide text-foreground">Notifications</span>
+                        {unreadCount > 0 && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30">
+                            {unreadCount} new
+                          </span>
+                        )}
+                      </div>
+                      {unreadCount > 0 && (
+                        <button
+                          onClick={markAllAsRead}
+                          className="text-[11px] font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Check className="w-3 h-3" /> Mark all read
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="overflow-y-auto divide-y divide-white/5 flex-1 scrollbar-thin">
+                      {notifications.length === 0 ? (
+                        <div className="p-8 text-center text-muted-foreground text-xs font-mono">
+                          No notifications yet. System is optimal.
+                        </div>
+                      ) : (
+                        notifications.map((n) => {
+                          const isCritical = n.severity === 'CRITICAL';
+                          const isWarning = n.severity === 'WARNING';
+                          return (
+                            <div
+                              key={n.id}
+                              onClick={() => !n.is_read && markAsRead(n.id)}
+                              className={`p-3.5 hover:bg-white/5 transition-colors cursor-pointer text-left ${
+                                !n.is_read ? 'bg-primary/5' : ''
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2 mb-1">
+                                <div className="flex items-center gap-1.5">
+                                  {isCritical ? (
+                                    <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                                  ) : isWarning ? (
+                                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                  ) : (
+                                    <Info className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                                  )}
+                                  <span className={`text-[11px] font-black tracking-wide ${!n.is_read ? 'text-foreground' : 'text-muted-foreground'}`}>
+                                    {n.title}
+                                  </span>
+                                </div>
+                                <span className="text-[9px] font-mono text-muted-foreground shrink-0">
+                                  {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                              <p className="text-xs text-muted-foreground leading-snug pl-5 line-clamp-2">
+                                {n.message}
+                              </p>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    <div className="p-3 border-t border-white/10 bg-black/40 text-center">
+                      <Link
+                        to="/notifications"
+                        onClick={() => setNotificationsOpen(false)}
+                        className="text-xs font-bold text-primary hover:underline"
+                      >
+                        View All Notifications →
+                      </Link>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
             <div className="hidden sm:flex w-10 h-10 rounded-xl bg-primary items-center justify-center text-sm font-black text-[hsl(var(--primary-foreground))] shadow-glow cursor-pointer hover:opacity-90 transition-opacity">
               AK
             </div>

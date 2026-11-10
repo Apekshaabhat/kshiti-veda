@@ -28,15 +28,6 @@ export const VirtualFarm = () => {
     nitrogenOffset: 0
   });
 
-  useEffect(() => {
-    if (activeFarm?.lat) {
-      fetch(`http://localhost:3001/api/weather?lat=${activeFarm.lat}&lon=${activeFarm.lon}`)
-        .then(r => r.json())
-        .then(d => setWeather(d))
-        .catch(() => {}); // silent fail for dummy demo if needed
-    }
-  }, [activeFarm]);
-
   const currentFarm = activeFarm || { id: 'farm-1', name: 'Green Valley Estate', lat: 18.5204, lon: 73.8567, area: 14.2, crop: 'Rice + Wheat' };
   const currentTelemetry = telemetry || {
     zones: [
@@ -46,15 +37,31 @@ export const VirtualFarm = () => {
     ]
   };
 
+  useEffect(() => {
+    if (currentFarm?.lat && currentFarm?.lon) {
+      const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost';
+      fetch(`http://${host}:3001/api/weather?lat=${currentFarm.lat}&lon=${currentFarm.lon}`)
+        .then(r => r.json())
+        .then(d => setWeather(d))
+        .catch(() => {}); // silent fail for dummy demo if needed
+    }
+  }, [currentFarm?.lat, currentFarm?.lon]);
+
   const crop = CROP_DB[cropId] || CROP_DB.basmati;
   
-  // Real State Aggregation
-  const realMoisture = currentTelemetry.zones.reduce((acc, z) => acc + z.moisture, 0) / currentTelemetry.zones.length;
-  const realPh = currentTelemetry.zones.reduce((acc, z) => acc + z.ph, 0) / currentTelemetry.zones.length;
-  const realN = currentTelemetry.zones.reduce((acc, z) => acc + z.nitrogen, 0) / currentTelemetry.zones.length;
-  const realP = currentTelemetry.zones.reduce((acc, z) => acc + z.phosphorus, 0) / currentTelemetry.zones.length;
-  const realK = currentTelemetry.zones.reduce((acc, z) => acc + z.potassium, 0) / currentTelemetry.zones.length;
-  const realTemp = currentTelemetry.zones.reduce((acc, z) => acc + z.temperature, 0) / currentTelemetry.zones.length;
+  // Real State Aggregation with null safety
+  const validAvg = (key: keyof typeof currentTelemetry.zones[0], fallback: number) => {
+    const list = currentTelemetry.zones.filter(z => z[key] !== null && z[key] !== undefined);
+    if (!list.length) return fallback;
+    return list.reduce((acc, z) => acc + (z[key] as number), 0) / list.length;
+  };
+
+  const realMoisture = validAvg('moisture', 55.0);
+  const realPh = validAvg('ph', 6.8);
+  const realN = validAvg('nitrogen', 75.0);
+  const realP = validAvg('phosphorus', 45.0);
+  const realK = validAvg('potassium', 65.0);
+  const realTemp = validAvg('temperature', 26.0);
 
   // Simulator Engine
   const envMoisture = simMode ? Math.max(0, Math.min(100, realMoisture + simModifiers.moistureOffset)) : realMoisture;
@@ -84,7 +91,7 @@ export const VirtualFarm = () => {
   
   if (envPh < crop.ph[0] || envPh > crop.ph[1]) { score -= 10; analysis.push({ p: 'pH', s: 'Warning', text: `pH (${envPh.toFixed(1)}) is marginal for ${crop.name}.` }); }
 
-  const waterReq = crop.waterFactor * (60 - envMoisture) * (activeFarm.area || 10);
+  const waterReq = crop.waterFactor * (60 - envMoisture) * (currentFarm.area || 10);
   const isDrought = envMoisture < 45;
 
   return (
@@ -101,7 +108,7 @@ export const VirtualFarm = () => {
              </div>
              <div>
                 <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Digital Twin Sandbox</h2>
-                <h1 className="text-2xl font-black text-foreground">{activeFarm.name}</h1>
+                <h1 className="text-2xl font-black text-foreground">{currentFarm.name}</h1>
              </div>
           </div>
           
@@ -127,11 +134,11 @@ export const VirtualFarm = () => {
            <div className="space-y-4">
               <div className="flex justify-between items-center text-sm">
                 <span className="text-muted-foreground font-bold flex items-center gap-2"><Wind className="w-4 h-4"/> GPS Area</span>
-                <span className="text-foreground font-black">{activeFarm.area} Acres</span>
+                <span className="text-foreground font-black">{currentFarm.area} Acres</span>
               </div>
               <div className="flex justify-between items-center text-sm">
                 <span className="text-muted-foreground font-bold flex items-center gap-2"><Thermometer className="w-4 h-4"/> Microclimate</span>
-                <span className="text-foreground font-black">{weather ? `${weather.current.temperature_2m}°C` : `${realTemp.toFixed(1)}°C`}</span>
+                <span className="text-foreground font-black">{weather?.current?.temperature_2m !== undefined ? `${weather.current.temperature_2m}°C` : `${realTemp.toFixed(1)}°C`}</span>
               </div>
            </div>
         </div>
@@ -153,7 +160,7 @@ export const VirtualFarm = () => {
                
                {/* Base Grid / Land Contour */}
                <div className="absolute inset-0 grid grid-cols-2 gap-6" style={{ transformStyle: "preserve-3d" }}>
-                 {telemetry.zones.map((z, index) => {
+                 {currentTelemetry.zones.map((z, index) => {
                    const m = simMode ? Math.max(0, Math.min(100, z.moisture + simModifiers.moistureOffset)) : z.moisture;
                    const nLvl = simMode ? Math.max(0, Math.min(200, z.nitrogen + simModifiers.nitrogenOffset)) : z.nitrogen;
                    const pLvl = simMode ? Math.max(0, Math.min(150, z.phosphorus + simModifiers.phosphorusOffset)) : z.phosphorus;
@@ -240,7 +247,7 @@ export const VirtualFarm = () => {
                </div>
                
                {/* Decorational Sun/Weather Overlay matching microclimate */}
-               {weather && weather.current.temperature_2m > 30 && (
+               {weather?.current?.temperature_2m !== undefined && weather.current.temperature_2m > 30 && (
                  <div className="absolute -top-32 -left-32 w-64 h-64 bg-yellow-500/15 rounded-full blur-[80px] pointer-events-none z-50 mix-blend-screen" 
                       style={{ transform: "translateZ(100px) rotateZ(45deg) rotateX(-60deg)" }} />
                )}

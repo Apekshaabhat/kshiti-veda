@@ -14,10 +14,13 @@ export interface HardwareTelemetry {
   soil_moisture: number | null;
   soil_raw_adc?: number | null;
   soil_ph: number | null;
+  ph_status?: 'VALID' | 'AIR' | 'UNAVAILABLE';
   soil_temperature: number | null;
   air_temperature: number | null;
   air_humidity: number | null;
   light_intensity: number | null;
+  light_source?: string;
+  light_unit?: string;
   wifi_rssi: number | null;
   uptime_ms?: number | null;
   timestamp: number;
@@ -33,9 +36,22 @@ export interface SensorAlert {
   timestamp: number;
 }
 
+export interface SimulatedNPK {
+  nitrate?: number;
+  sodium?: number;
+  nitrogen: number;
+  phosphorus: number;
+  potassium: number;
+  provenance: 'simulation';
+}
+
 export interface AIAnalysisResult {
   device_id: string;
   timestamp: number;
+  mode: 'LIVE' | 'SIMULATED';
+  source: 'hardware' | 'simulation';
+  npk_provenance: 'simulation';
+  npk?: SimulatedNPK;
   overall_score: number;
   soil_status: 'Optimal' | 'Mild Stress' | 'High Stress' | 'Critical Risk';
   water_requirement: 'None' | 'Low' | 'Moderate' | 'Immediate High';
@@ -48,17 +64,48 @@ export interface AIAnalysisResult {
     soil_temperature: 'healthy' | 'warning' | 'error' | 'disconnected';
     air_dht: 'healthy' | 'warning' | 'error' | 'disconnected';
     ambient_light: 'healthy' | 'warning' | 'error' | 'disconnected';
+    npk: 'simulated';
   };
   explainable_insights: string[];
   actionable_prescriptions: string[];
   alerts: SensorAlert[];
 }
 
+export type PHClassification =
+  | 'Strongly acidic'
+  | 'Acidic'
+  | 'Neutral'
+  | 'Near neutral'
+  | 'Alkaline'
+  | 'Strongly alkaline'
+  | 'Invalid';
+
+export function classifySoilPH(ph: number | null | undefined): PHClassification {
+  if (ph === null || ph === undefined || isNaN(ph) || ph < 0.0 || ph > 14.0) {
+    return 'Invalid';
+  }
+  if (ph <= 3.0) return 'Strongly acidic';
+  if (ph <= 6.5) return 'Acidic';
+  if (Math.abs(ph - 7.0) < 0.001) return 'Neutral';
+  if (ph <= 7.5) return 'Near neutral';
+  if (ph <= 10.0) return 'Alkaline';
+  return 'Strongly alkaline';
+}
+
 /**
- * Executes full AI analysis over real physical sensor readings.
- * Does NOT generate fake data when a sensor is disconnected or null.
+ * Executes full AI analysis over real physical sensor readings or simulated data.
+ * Does NOT generate fake data when a physical sensor is disconnected or null.
+ * 
+ * NPK Handling Rule:
+ * In both LIVE and SIMULATED modes, NPK data is sourced from the centralized simulation engine.
+ * LIVE mode operates as a HYBRID mode: physical readings for installed sensors (moisture, pH, temp, light)
+ * and simulated readings for NPK. NPK provenance is explicitly tagged as 'simulation'.
  */
-export function runHardwareAIAnalysis(data: HardwareTelemetry): AIAnalysisResult {
+export function runHardwareAIAnalysis(
+  data: HardwareTelemetry,
+  mode: 'LIVE' | 'SIMULATED' = 'LIVE',
+  simulatedNPK?: SimulatedNPK
+): AIAnalysisResult {
   const anomalies: string[] = [];
   const insights: string[] = [];
   const prescriptions: string[] = [];
@@ -67,13 +114,20 @@ export function runHardwareAIAnalysis(data: HardwareTelemetry): AIAnalysisResult
   let healthScore = 100;
   let activeSensorsCount = 0;
 
+  if (mode === 'LIVE') {
+    insights.push('Hybrid Live Mode Active: Moisture, pH, temperature and light come from physical ESP32 sensors; NPK metrics are provided by the centralized simulation engine.');
+  } else {
+    insights.push('Telemetry running in centralized SIMULATED mode for demonstrations (all parameters simulated).');
+  }
+
   // 1. Sensor Health Diagnosis & Anomaly Detection
   const sensorHealth: AIAnalysisResult['sensor_health'] = {
     soil_moisture: data.soil_moisture !== null ? 'healthy' : 'disconnected',
-    soil_ph: data.soil_ph !== null ? 'healthy' : 'disconnected',
+    soil_ph: data.ph_status === 'AIR' ? 'healthy' : (data.soil_ph !== null && data.ph_status !== 'UNAVAILABLE' ? 'healthy' : 'disconnected'),
     soil_temperature: data.soil_temperature !== null ? 'healthy' : 'disconnected',
     air_dht: (data.air_temperature !== null && data.air_humidity !== null) ? 'healthy' : 'disconnected',
-    ambient_light: data.light_intensity !== null ? 'healthy' : 'disconnected'
+    ambient_light: data.light_intensity !== null ? 'healthy' : 'disconnected',
+    npk: 'simulated'
   };
 
   // Check hardware electrical bounds (ADC stuck or probe open circuit)
@@ -135,23 +189,46 @@ export function runHardwareAIAnalysis(data: HardwareTelemetry): AIAnalysisResult
     insights.push('Soil moisture probe is currently offline. Skipping hydration scoring.');
   }
 
-  // 3. Soil pH Absorption Matrix
-  if (data.soil_ph !== null) {
+  // 3. Soil pH Absorption Matrix (Scientific Scale & Chemistry)
+  if (data.ph_status === 'AIR') {
+    // When ph_status is AIR, do not display numeric pH value, do not classify it, and do not calculate soil health using this reading
+    insights.push('pH sensor probe is exposed to air. Soil reaction measurement suspended until probe is inserted into soil.');
+  } else if (data.soil_ph !== null && data.ph_status !== 'UNAVAILABLE') {
     activeSensorsCount++;
     const ph = data.soil_ph;
-    if (ph < 5.5) {
-      healthScore -= 20;
+    const classification = classifySoilPH(ph);
+
+    if (ph <= 3.0) {
+      healthScore -= 30;
       alerts.push({
         device_id: data.device_id,
         parameter: 'soil_ph',
-        severity: 'warning',
-        message: `Strongly acidic soil detected: pH ${ph.toFixed(2)}. Phosphorus lockup likely.`,
-        recommendation: 'Incorporate agricultural limestone or calcium carbonate.',
+        severity: 'critical',
+        message: `Strongly acidic soil detected: pH ${ph.toFixed(2)}. Severe Aluminum/Manganese toxicity and root necrosis risk.`,
+        recommendation: 'Immediate incorporation of agricultural limestone or hydrated lime.',
         timestamp: data.timestamp
       });
-      insights.push(`Soil pH (${ph.toFixed(2)}) is strongly acidic. Micronutrient toxicity (Al/Mn) and Phosphorus fixation risk.`);
-      prescriptions.push('Apply agricultural lime (calcitic limestone) at 50kg/acre to elevate pH towards 6.5.');
-    } else if (ph > 7.8) {
+      insights.push(`Soil pH (${ph.toFixed(2)}) is Strongly Acidic. Acute cation exchange collapse and Phosphorus lockup.`);
+      prescriptions.push('Incorporate agricultural lime (calcitic limestone) at 75-100 kg/acre to restore root zone pH above 6.0.');
+    } else if (ph <= 6.5) {
+      if (ph < 5.8) {
+        healthScore -= 15;
+        alerts.push({
+          device_id: data.device_id,
+          parameter: 'soil_ph',
+          severity: 'warning',
+          message: `Acidic soil detected: pH ${ph.toFixed(2)}. Phosphorus lockup likely.`,
+          recommendation: 'Incorporate agricultural limestone or calcium carbonate.',
+          timestamp: data.timestamp
+        });
+        insights.push(`Soil pH (${ph.toFixed(2)}) is Acidic. Micronutrient fixation and reduced bacterial nitrification.`);
+        prescriptions.push('Apply agricultural lime at 40-50 kg/acre to elevate pH towards near neutral.');
+      } else {
+        insights.push(`Soil pH (${ph.toFixed(2)}) is Acidic, suitable for moderately acid-tolerant crop rootstocks.`);
+      }
+    } else if (ph <= 7.5) {
+      insights.push(`Soil pH (${ph.toFixed(2)}) is ${classification}, supporting optimal root cation-exchange capacity and nutrient uptake.`);
+    } else if (ph <= 10.0) {
       healthScore -= 20;
       alerts.push({
         device_id: data.device_id,
@@ -161,10 +238,21 @@ export function runHardwareAIAnalysis(data: HardwareTelemetry): AIAnalysisResult
         recommendation: 'Apply elemental sulfur or acidifying organic compost.',
         timestamp: data.timestamp
       });
-      insights.push(`Alkaline pH (${ph.toFixed(2)}) restricts Iron, Zinc, and Manganese bio-availability.`);
-      prescriptions.push('Introduce elemental sulfur or gypsum to balance soil alkalinity.');
+      insights.push(`Soil pH (${ph.toFixed(2)}) is Alkaline. Restricts Iron (Fe), Zinc (Zn), and Manganese (Mn) bioavailability.`);
+      prescriptions.push('Introduce elemental sulfur (25-35 kg/acre) or organic compost to balance soil alkalinity.');
     } else {
-      insights.push(`Soil pH is well-balanced (${ph.toFixed(2)}), supporting optimal root cation-exchange capacity.`);
+      // Strongly alkaline (> 10.0)
+      healthScore -= 30;
+      alerts.push({
+        device_id: data.device_id,
+        parameter: 'soil_ph',
+        severity: 'critical',
+        message: `Strongly alkaline soil detected: pH ${ph.toFixed(2)}. Severe sodicity and micronutrient lockout.`,
+        recommendation: 'Apply agricultural gypsum and organic acidifiers with deep leaching.',
+        timestamp: data.timestamp
+      });
+      insights.push(`Soil pH (${ph.toFixed(2)}) is Strongly Alkaline. Sodium carbonate accumulation and root structure degradation.`);
+      prescriptions.push('Heavy application of agricultural gypsum followed by flood leaching.');
     }
   }
 
@@ -215,27 +303,91 @@ export function runHardwareAIAnalysis(data: HardwareTelemetry): AIAnalysisResult
     }
   }
 
-  // 6. Ambient Light & Photosynthesis Suitability (BH1750 I2C)
+  // 6. Optical Light Intensity & Photosynthesis Suitability (4-in-1 Module L-Field)
   let photoEff: AIAnalysisResult['photosynthesis_efficiency'] = 'Unavailable';
   if (data.light_intensity !== null) {
     activeSensorsCount++;
-    const lux = data.light_intensity;
-    if (lux < 200) {
+    const lightVal = data.light_intensity;
+    const isRaw = data.light_unit === 'raw' || data.light_source === 'PH_MODULE_L_RAW';
+    const unitLabel = isRaw ? 'raw units' : 'module units';
+
+    if (lightVal < 200) {
       photoEff = 'Low (Low Light)';
-      insights.push(`Low ambient solar irradiance (${lux.toFixed(0)} lux). Plant is in low-photosynthesis / dark respiration state.`);
-    } else if (lux <= 35000) {
+      insights.push(`Low ambient light level (${lightVal.toFixed(0)} ${unitLabel}). Plant is in low-photosynthesis / dark respiration state.`);
+    } else if (lightVal <= 35000) {
       photoEff = 'Optimal';
-      insights.push(`Solar irradiance (${lux.toFixed(0)} lux) is ideal for light-dependent photosynthetic reactions.`);
+      insights.push(`Ambient light level (${lightVal.toFixed(0)} ${unitLabel}) is ideal for light-dependent photosynthetic reactions.`);
     } else {
       photoEff = 'High (Excess Light)';
-      insights.push(`High solar irradiance (${lux.toFixed(0)} lux). Monitor canopy moisture to prevent photo-inhibition.`);
+      insights.push(`High ambient light level (${lightVal.toFixed(0)} ${unitLabel}). Monitor canopy moisture to prevent photo-inhibition.`);
     }
   }
 
-  // If no sensors are reporting, adjust score
-  if (activeSensorsCount === 0) {
+  // 7. Estimated Soil Nutrient Profile (Nitrate, Sodium, Potassium - Active in both LIVE and SIMULATED modes)
+  if (simulatedNPK) {
+    const nitrate = simulatedNPK.nitrate ?? simulatedNPK.nitrogen;
+    const sodium = simulatedNPK.sodium ?? simulatedNPK.phosphorus;
+    const potassium = simulatedNPK.potassium;
+
+    // Nitrate (NO3-) Analysis (Estimated Baseline ~40-70 mg/kg)
+    if (nitrate < 35) {
+      healthScore -= 10;
+      alerts.push({
+        device_id: data.device_id,
+        parameter: 'nitrate',
+        severity: 'warning',
+        message: `Low Nitrate (NO3-) estimated: ${nitrate.toFixed(1)} mg/kg. Risk of reduced vegetative vigor.`,
+        recommendation: 'Apply calcium nitrate or well-decomposed organic compost fertigation.',
+        timestamp: data.timestamp
+      });
+      insights.push(`Nitrate level (${nitrate.toFixed(1)} mg/kg) [Estimated] is low. Vegetative biomass accumulation impaired.`);
+      prescriptions.push('Supplement nitrate via organic compost tea or calcium nitrate solution.');
+    } else if (nitrate > 100) {
+      healthScore -= 5;
+      insights.push(`Nitrate level (${nitrate.toFixed(1)} mg/kg) [Estimated] is elevated. Monitor vegetative growth rate.`);
+    } else {
+      insights.push(`Nitrate level (${nitrate.toFixed(1)} mg/kg) [Estimated] is optimal for root nitrogen uptake.`);
+    }
+
+    // Sodium (Na+) Analysis (Estimated Baseline ~15-35 mg/kg; excessive > 50 mg/kg damages soil structure)
+    if (sodium > 50) {
+      healthScore -= 10;
+      alerts.push({
+        device_id: data.device_id,
+        parameter: 'sodium',
+        severity: 'warning',
+        message: `Elevated Sodium (Na+) estimated: ${sodium.toFixed(1)} mg/kg. Risk of soil sodicity and crusting.`,
+        recommendation: 'Apply agricultural gypsum (calcium sulfate) to displace sodium and leach root zone.',
+        timestamp: data.timestamp
+      });
+      insights.push(`Sodium level (${sodium.toFixed(1)} mg/kg) [Estimated] is elevated. SAR and sodicity risk increased.`);
+      prescriptions.push('Incorporate agricultural gypsum to displace exchangeable sodium cations.');
+    } else {
+      insights.push(`Sodium level (${sodium.toFixed(1)} mg/kg) [Estimated] is within safe non-sodic limits.`);
+    }
+
+    // Potassium (K+) Analysis (Estimated Baseline ~50-90 mg/kg)
+    if (potassium < 45) {
+      healthScore -= 8;
+      alerts.push({
+        device_id: data.device_id,
+        parameter: 'potassium',
+        severity: 'warning',
+        message: `Low Potassium (K+) estimated: ${potassium.toFixed(1)} mg/kg. Stomatal regulation impaired.`,
+        recommendation: 'Apply potassium sulfate (SOP) or organic wood ash.',
+        timestamp: data.timestamp
+      });
+      insights.push(`Potassium level (${potassium.toFixed(1)} mg/kg) [Estimated] is deficient. Osmotic tolerance lowered.`);
+      prescriptions.push('Incorporate potassium sulfate (SOP) to boost drought and heat resistance.');
+    } else {
+      insights.push(`Potassium level (${potassium.toFixed(1)} mg/kg) [Estimated] is balanced for crop osmotic regulation.`);
+    }
+  }
+
+  // If no physical sensors are reporting in LIVE mode, adjust score
+  if (mode === 'LIVE' && activeSensorsCount === 0) {
     healthScore = 0;
-    insights.push('No physical sensors currently online. Live AI scoring in standby.');
+    insights.push('Physical ESP32 node offline. Live AI scoring in standby.');
   } else {
     healthScore = Math.max(0, Math.min(100, Math.round(healthScore)));
   }
@@ -248,6 +400,10 @@ export function runHardwareAIAnalysis(data: HardwareTelemetry): AIAnalysisResult
   return {
     device_id: data.device_id,
     timestamp: data.timestamp,
+    mode,
+    source: mode === 'LIVE' ? 'hardware' : 'simulation',
+    npk_provenance: 'simulation',
+    npk: simulatedNPK,
     overall_score: healthScore,
     soil_status: soilStatus,
     water_requirement: waterReq,

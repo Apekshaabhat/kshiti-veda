@@ -46,24 +46,32 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const buildSensors = useCallback((): SensorEntry[] => {
     const hw = telemetry?.hardware?.data;
+    const isLive = telemetry?.mode === 'LIVE';
+
     if (telemetry?.data?.zones?.length) {
       const zones = telemetry.data.zones;
-      const avg = (key: keyof typeof zones[0]) =>
-        Number((zones.reduce((acc, z) => acc + (z[key] as number), 0) / zones.length).toFixed(1));
-      const min = (key: keyof typeof zones[0]) =>
-        Math.min(...zones.map(z => z[key] as number));
+      const validAvg = (key: keyof typeof zones[0], fallback: number) => {
+        const list = zones.filter(z => z[key] !== null && z[key] !== undefined);
+        if (!list.length) return fallback;
+        return Number((list.reduce((acc, z) => acc + (z[key] as number), 0) / list.length).toFixed(1));
+      };
+      const min = (key: keyof typeof zones[0]) => {
+        const list = zones.filter(z => z[key] !== null && z[key] !== undefined);
+        if (!list.length) return 50;
+        return Math.min(...list.map(z => z[key] as number));
+      };
 
       // Prefer real physical sensor readings if available
-      const moistureVal = hw?.soil_moisture !== null && hw?.soil_moisture !== undefined ? hw.soil_moisture : avg('moisture');
-      const phVal = hw?.soil_ph !== null && hw?.soil_ph !== undefined ? hw.soil_ph : avg('ph');
-      const tempVal = hw?.soil_temperature !== null && hw?.soil_temperature !== undefined ? hw.soil_temperature : avg('temperature');
+      const moistureVal = hw?.soil_moisture !== null && hw?.soil_moisture !== undefined ? hw.soil_moisture : validAvg('moisture', 55);
+      const phVal = hw?.soil_ph !== null && hw?.soil_ph !== undefined ? hw.soil_ph : validAvg('ph', 6.8);
+      const tempVal = hw?.soil_temperature !== null && hw?.soil_temperature !== undefined ? hw.soil_temperature : validAvg('temperature', 26);
 
       return [
         { id: 'moisture',    name: hw?.soil_moisture != null ? 'Live Soil Moisture (ESP32)' : 'Avg Moisture',    value: moistureVal,    unit: '%',     trend: -2.4, status: min('moisture') < 60 ? 'warning' : 'live', icon: 'Droplets',     color: 'primary' },
         { id: 'ph',          name: hw?.soil_ph != null ? 'Live Soil pH (ESP32)' : 'Avg pH',                      value: phVal,          unit: 'pH',    trend: 0.1,  status: 'live',                                      icon: 'FlaskConical', color: 'secondary' },
-        { id: 'nitrogen',    name: 'Nitrogen (N)',      value: avg('nitrogen'),    unit: 'mg/kg', trend: 1.5,  status: 'live',                                      icon: 'Activity',     color: 'primary' },
-        { id: 'phosphorus',  name: 'Phosphorus (P)',    value: avg('phosphorus'),  unit: 'mg/kg', trend: -4.1, status: min('phosphorus') < 50 ? 'warning' : 'live', icon: 'Activity',     color: 'accent' },
-        { id: 'potassium',   name: 'Potassium (K)',     value: avg('potassium'),   unit: 'mg/kg', trend: 0.5,  status: 'live',                                      icon: 'Activity',     color: 'secondary' },
+        { id: 'nitrogen',    name: 'Nitrogen (N)',      value: isLive ? 'UNAVAILABLE' : validAvg('nitrogen', 75),    unit: isLive ? '' : 'mg/kg', trend: 1.5,  status: isLive ? 'uninstalled' : 'live',             icon: 'Activity',     color: 'primary' },
+        { id: 'phosphorus',  name: 'Phosphorus (P)',    value: isLive ? 'UNAVAILABLE' : validAvg('phosphorus', 55),  unit: isLive ? '' : 'mg/kg', trend: -4.1, status: isLive ? 'uninstalled' : (min('phosphorus') < 50 ? 'warning' : 'live'), icon: 'Activity', color: 'accent' },
+        { id: 'potassium',   name: 'Potassium (K)',     value: isLive ? 'UNAVAILABLE' : validAvg('potassium', 70),   unit: isLive ? '' : 'mg/kg', trend: 0.5,  status: isLive ? 'uninstalled' : 'live',             icon: 'Activity',     color: 'secondary' },
         { id: 'temperature', name: hw?.soil_temperature != null ? 'Live Soil Temp (ESP32)' : 'Soil Temp',       value: tempVal,        unit: '°C',    trend: 1.2,  status: 'live',                                      icon: 'Thermometer',  color: 'accent' },
       ];
     }

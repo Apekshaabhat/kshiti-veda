@@ -24,7 +24,11 @@
 #define TELEMETRY_INTERVAL_MS 5000  // Send reading every 5 seconds
 
 // ----- Capacitive Soil Moisture Calibration (12-bit ADC: 0 - 4095) -----
-// Dry air ADC value (~3200-3800), fully submerged in water (~1200-1600)
-#define SOIL_ADC_DRY  3200
-#define SOIL_ADC_WET  1400
+// Dry air ADC value (~3470), water submerged (~3370)
+// Actual measured hardware baseline:
+#define SOIL_ADC_DRY  3470
+#define SOIL_ADC_WET  3370
+#define MOISTURE_SAMPLE_COUNT 10
 
+// ----- Soil pH Sensor UART Settings -----
+#define PH_TIMEOUT_MS 5000  // Invalidate pH reading if no valid UART packet received within 5 seconds

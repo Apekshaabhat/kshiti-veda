@@ -238,7 +238,16 @@ export const CropAI = () => {
                       </div>
                     )}
 
-                    {hardware?.online && hardware.data?.soil_ph !== null && hardware.data?.soil_ph !== undefined && (
+                    {hardware?.online && hardware.data?.ph_status === 'AIR' && (
+                      <div className="flex gap-3 text-xs bg-amber-500/10 p-3 rounded-xl border border-amber-500/20 items-center">
+                        <Icons.FlaskConical className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                        <p className="text-muted-foreground font-medium">
+                          Live Soil pH: <span className="font-bold text-amber-400 font-mono">AIR</span> (Sensor exposed to air · No soil contact)
+                        </p>
+                      </div>
+                    )}
+
+                    {hardware?.online && hardware.data?.ph_status !== 'AIR' && hardware.data?.soil_ph !== null && hardware.data?.soil_ph !== undefined && (
                       <div className="flex gap-3 text-xs bg-muted/40 p-3 rounded-xl border border-border/50 items-center">
                         <Icons.FlaskConical className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                         <p className="text-muted-foreground font-medium">
